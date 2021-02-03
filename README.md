@@ -12,6 +12,6 @@ and submit the form
 5. The SAML assertion is then encoded and used to make a call to the configured DELL EMC's ECS STS API
 6. If successful parse the response and use the temporary credentials to perform test S3 operations
 
-For more information, please see the [wiki](https://github.com/OohDark30/ecs-saml-assertion-demo/wiki)
+For more information, please see the [wiki](https://github.com/OohDark30/ecs-saml-demo/wiki)
 
 
