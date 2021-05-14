@@ -11,7 +11,7 @@ try:
     import xml.etree.cElementTree as ET
 except ImportError:
     import xml.etree.ElementTree as ET
-
+import boto3
 
 class ECSException(Exception):
     pass
@@ -68,12 +68,12 @@ class ECSAuthentication(object):
             self.token = None
 
 
-class ECSManagementAPI(object):
+class ECSApi(object):
     """
-    Perform ECS Management API Calls
+    Management API Calls
     """
 
-    def __init__(self, authentication, connecttimeout, readtimeout, logger, response_json=None):
+    def __init__(self, authentication, connecttimeout, readtimeout, logger, response_json=None, secure_data=443, insecure_data=80, namespace=None):
         self.ecs_authentication_failure = int('497')
         self.authentication = authentication
         self.response_json = response_json
@@ -81,6 +81,9 @@ class ECSManagementAPI(object):
         self.readtimeout = readtimeout
         self.logger = logger
         self.response_xml_file = None
+        self.secure_data_port = secure_data
+        self.insecure_data_port = insecure_data
+        self.namespace = namespace
 
     def get_local_zone_data(self):
 
@@ -516,6 +519,7 @@ class ECSManagementAPI(object):
         while True:
             # Perform ECS STS AssumeRoleWithSAML API Call
             headers = {'X-SDS-AUTH-TOKEN': "'{0}'".format(self.authentication.token), 'content-type': 'application/json'}
+            #headers = {'content-type': 'application/json'}
 
             # We will force the size unit to KB as we will convert that to bytes for storage in Influx
             params_dict = {'DurationSeconds': '1800', 'RoleArn': role, 'PrincipalArn': provider, 'SAMLAssertion': assertion}
@@ -609,6 +613,55 @@ class ECSManagementAPI(object):
                     summary_values[current_epoch] = {}
                     summary_values[current_epoch][field+keys] = \
                         float(summary_dict[keys])
+
+    """
+    S3 API Calls
+    """
+    def s3_create_bucket(self, access_key, secret_key, session_token, data_port, bucket_name):
+
+        try:
+            session = boto3.session.Session()
+
+            s3_client = session.client(
+                service_name='s3',
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                aws_session_token=session_token,
+                endpoint_url="http://{0}:{1}".format(self.authentication.host, data_port),
+            )
+
+            # Create the bucket
+            response = s3_client.create_bucket(
+                Bucket=bucket_name
+            )
+
+            print(response)
+        except Exception as ex:
+            raise ex
+
+    def s3_create_object(self, access_key, secret_key, session_token, data_port, bucket_name,
+                         object_name, object_content, user_meta_data):
+
+        try:
+            session = boto3.session.Session()
+
+            s3_client = session.client(
+                service_name='s3',
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                aws_session_token=session_token,
+                endpoint_url="http://{0}:{1}".format(self.authentication.host, data_port),
+            )
+
+            # Create the bucket
+            response = s3_client.put_object(
+                Bucket=bucket_name,
+                Key=object_name,
+                Metadata=user_meta_data
+            )
+            print(response)
+        except Exception as ex:
+            raise ex
 
 
 class ECSUtility(object):

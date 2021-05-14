@@ -5,18 +5,41 @@
   "ECS_CONNECTION": [ {
     "protocol": "https",
     "host": "xx.xx.xx.xx",
-    "port": "4443",
+      "port": "4443",
     "user": "root",
     "password": "ChangeMe",
     "dataType": "default",
     "category":"default",
     "connectTimeout": "15",
-    "readTimeout": "60"
+    "readTimeout": "60",
+    "namespace": "",
+    "secureDataPort": "443",
+    "insecureDataPort": "80"
   }],
   "SAML_IDP": {
-      "idp_sso_url": "https://zzzzzzzzz"
+      "idp_sso_url": "<idp_sso_login_url>>"
     },
   "AWS_CONFIGURATION": {
     "region": "US",
     "output": "json"
+  },
+  "TEST_DATA_GENERATION": {
+    "generate_data": "N",
+    "bucketPrefix": "meta-data-bucket",
+    "objectPrefix": "object",
+    "objectContentTemplate": "This is a test of the emergency broadcast system test #",
+    "numberOfBuckets": "10",
+    "numberOfObjects": "10",
+    "userMetadataHeaderPrefix": "x-amx-metadata"
+  },
+  "USER_META_DATA": [ {
+    "key": "costcenter",
+    "value": "123"
+  },{
+    "key": "division",
+    "value": "acme"
+  },{
+    "key": "color",
+    "value": "yellow"
+  }]
 }

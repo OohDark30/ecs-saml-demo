@@ -10,17 +10,15 @@ from bs4 import BeautifulSoup
 from configuration.ecs_saml_demo_configuration import ECSSAMLConfiguration
 from logger import ecs_logger
 from ecs.ecs import ECSAuthentication
-from ecs.ecs import ECSManagementAPI
+from ecs.ecs import ECSApi
 from ecs.ecs import ECSUtility
 import errno
-import datetime
 import getpass
 import os
 import traceback
 import signal
 import time
 import logging
-import xml.etree.ElementTree as ET
 import re
 import xml.etree.ElementTree as ET
 
@@ -38,7 +36,10 @@ _logger = None
 _ecsAuthentication = list()
 _influxClient = None
 _ecsVDCLookup = None
-_ecsManagmentAPI = list()
+_ecsApi = list()
+_stsAccessKeyId = None
+_stsSecretKey = None
+_stsSessionToken = None
 
 """
 Class to listen for signal termination for controlled shutdown
@@ -56,13 +57,14 @@ class ECSDataCollectionShutdown:
         self.kill_now = True
 
 
-class ECSDataCollection():
-    def __init__(self, method, logger, ecsmanagmentapi, tempdir, saml_assertion):
+class ECSDataCollection:
+    def __init__(self, method, logger, ecs_api_input, tempdir, saml_assertion_input, index_role_to_assume_input):
         self.method = method
         self.logger = logger
-        self.ecsmanagmentapi = ecsmanagmentapi
+        self.ecs_api = ecs_api_input
         self.tempdir = tempdir
-        self.assertion = saml_assertion
+        self.assertion = saml_assertion_input
+        self.index_role_to_assume = index_role_to_assume_input
 
         logger.info(MODULE_NAME + '::ECSDataCollection()::init method of class called')
 
@@ -70,7 +72,7 @@ class ECSDataCollection():
             self.logger.info(MODULE_NAME + '::ECSDataCollection()::Starting method: ' + self.method)
 
             if self.method == 'ecs_assume_role_saml':
-                ecs_assume_role_saml(self.logger, self.ecsmanagmentapi, self.tempdir, self.assertion)
+                ecs_assume_role_saml(self.logger, self.ecs_api, self.tempdir, self.assertion, self.index_role_to_assume)
             else:
                 self.logger.info(MODULE_NAME + '::ECSDataCollection()::Requested method ' +
                                  self.method + ' is not supported.')
@@ -84,9 +86,13 @@ class ECSSAMLAssertion:
         self.saml_assertion = assertion
         self.roles = []
         self.providers = []
+        self.shortRoles = []
 
     def addRole(self, role):
         self.roles.append(role)
+
+    def addShortRole(self, role):
+        self.shortRoles.append(role)
 
     def addProvider(self, provider):
         self.roles.providers(provider)
@@ -137,7 +143,11 @@ def ecs_config(config, temp_dir):
                                     'exception occured: ' + str(e) + "\n" + traceback.format_exc())
 
 
-def ecs_assume_role_saml(logger, ecsmanagmentapi, tempdir, assertion):
+def ecs_assume_role_saml(logger, ecsmanagmentapi, tempdir, assertion, index_of_role_to_assume):
+    global _stsAccessKeyId
+    global _stsSecretKey
+    global _stsSessionToken
+
     try:
         # Perform API call against each configured ECS
         for ecsconnection in ecsmanagmentapi:
@@ -145,10 +155,10 @@ def ecs_assume_role_saml(logger, ecsmanagmentapi, tempdir, assertion):
             # for each role / provider combination call the AssumeRoleWithSAML STS API
             i = 0
             assertion_saml = assertion.saml_assertion
-            while i < len(assertion.roles):
+            while i < 1:
                 assume_role_with_saml_data = ecsconnection.assume_role_with_saml(assertion_saml,
-                                                                                 assertion.roles[i],
-                                                                                 assertion.providers[i], tempdir)
+                                                                                 assertion.roles[index_of_role_to_assume],
+                                                                                 assertion.providers[index_of_role_to_assume], tempdir)
                 if assume_role_with_saml_data is None:
                     # If we had an issue just log the error and keep going to the next bucket
                     logger.info(MODULE_NAME + '::ecs_assume_role_saml()::Unable to retrieve temporary credentials '
@@ -173,9 +183,11 @@ def ecs_assume_role_saml(logger, ecsmanagmentapi, tempdir, assertion):
                         print('AWS_SECRET_ACCESS_KEY: {}'.format(aws_secret_access_key))
                         print('AWS_SESSION_TOKEN: {}'.format(aws_session_token))
                         print("#########################################################################################################:")
+                        _stsAccessKeyId = aws_access_key_id
+                        _stsSecretKey = aws_secret_access_key
+                        _stsSessionToken = aws_session_token
 
-
-                        # If we had an issue just log the error and keep going to the next bucket
+# If we had an issue just log the error and keep going to the next bucket
                         logger.info(MODULE_NAME + '::ecs_assume_role_saml()::Retrieved the following temporary'
                                                   ' credentials for role ' + assertion.roles[i] + ' and provider: ' +
                                     assertion.providers[i])
@@ -198,11 +210,33 @@ def ecs_assume_role_saml(logger, ecsmanagmentapi, tempdir, assertion):
                                     'exception occured: ' + str(e) + "\n" + traceback.format_exc())
 
 
+def s3_create_bucket(logger, ecs_connection_input, access_key, secret_key, session_token, bucket_name):
+    global _configuration
+    global _logger
+    global _ecsAuthentication
+
+    try:
+        ecs_connection_input.s3_create_bucket(access_key, secret_key, session_token, 9020, bucket_name)
+    except Exception as ex:
+        raise ex
+
+
+def s3_create_object(logger, ecs_connection_input, access_key, secret_key, session_token, bucket_name, object_name, object_content, user_meta_data):
+    global _configuration
+    global _logger
+    global _ecsAuthentication
+
+    try:
+        ecs_connection_input.s3_create_object(access_key, secret_key, session_token, 9020, bucket_name, object_name, object_content, user_meta_data)
+    except Exception as ex:
+        raise ex
+
+
 def ecs_authenticate():
     global _ecsAuthentication
     global _configuration
     global _logger
-    global _ecsManagmentAPI
+    global _ecsApi
     connected = True
 
     try:
@@ -229,8 +263,8 @@ def ecs_authenticate():
                 _ecsAuthentication.append(auth)
 
                 # Instantiate ECS Management API object, add it to our list, and validate that we are authenticated
-                _ecsManagmentAPI.append(ECSManagementAPI(auth, ecsconnection['connectTimeout'],
-                                                         ecsconnection['readTimeout'], _logger))
+                _ecsApi.append(ECSApi(auth, ecsconnection['connectTimeout'],
+                                      ecsconnection['readTimeout'], _logger))
                 if not _ecsAuthentication:
                     _logger.info(MODULE_NAME + '::ecs_authenticate()::ECS SAML Assertion '
                                                'Module is not ready.  Please check logs.')
@@ -249,7 +283,7 @@ def ecs_data_collection():
     global _influxClient
     global _ecsAuthentication
     global _logger
-    global _ecsManagmentAPI
+    global _ecsApi
 
     try:
         # Wait till configuration is set
@@ -261,13 +295,77 @@ def ecs_data_collection():
         for i, j in _configuration.modules_intervals.items():
             method = str(i)
             interval = str(j)
-            t = ECSDataCollection(method, _influxClient, _logger, _ecsManagmentAPI, interval,
+            t = ECSDataCollection(method, _influxClient, _logger, _ecsApi, interval,
                                   _configuration.tempfilepath)
             t.start()
 
     except Exception as e:
-        _logger.error(MODULE_NAME + '::ecs_data_collection()::A failure ocurred during data collection. Cause: '
+        _logger.error(MODULE_NAME + '::ecs_data_collection()::A failure occurred during data collection. Cause: '
                       + str(e) + "\n" + traceback.format_exc())
+
+
+def ecs_test_sts_temp_credentials():
+    global _logger
+    global _configuration
+    global _ecsAuthentication
+    global _ecsApi
+    global _stsAccessKeyId
+    global _stsSecretKey
+    global _stsSessionToken
+
+    # Create the configured # of bucket(s)
+    buckets_to_create = _configuration.test_data_generation['numberOfBuckets']
+    objects_to_create = _configuration.test_data_generation['numberOfObjects']
+    bucketPrefix = _configuration.test_data_generation['bucketPrefix']
+    objectPrefix = _configuration.test_data_generation['objectPrefix']
+    objectContentTemplate = _configuration.test_data_generation['objectContentTemplate']
+    userMetadataHeaderPrefix = _configuration.test_data_generation['userMetadataHeaderPrefix']
+
+    # Generate dictionary of user meta data
+    user_metadata_dictionary = {}
+
+    # Iterate thru dictionary of user meta data attributes to add
+    # and generate
+    for list_dict in _configuration.user_metadata:
+        user_metadata_dictionary[list_dict['key']] = list_dict['value']
+
+    # Create the configured # of objects in the bucket using the
+    # user meta-data attributes for the configured ECS Clusters
+    for ecs_connection in _ecsApi:
+        i = 1
+        try:
+            while i <= int(buckets_to_create):
+                # Create the bucket
+
+                s3_create_bucket(_logger, ecs_connection, _stsAccessKeyId, _stsSecretKey, _stsSessionToken, (bucketPrefix + "-" + str(i)))
+
+                # Create the objects in the bucket
+                j = 1
+                while j <= int(objects_to_create):
+                    object_data = objectContentTemplate + str(j)
+                    s3_create_object(_logger, ecs_connection, _stsAccessKeyId, _stsSecretKey, _stsSessionToken, (bucketPrefix + "-" + str(i)), (objectPrefix + "-" + str(j)), object_data, user_metadata_dictionary)
+                    j += 1
+
+                i += 1
+
+            # Now delete the objects and buckets created
+            while j <= int(buckets_to_create):
+                # Create the bucket
+
+                s3_create_bucket(_logger, ecs_connection, _stsAccessKeyId, _stsSecretKey, _stsSessionToken, (bucketPrefix + "-" + str(i)))
+
+                # Create the objects in the bucket
+                k = 1
+                while j <= int(objects_to_create):
+                    object_data = objectContentTemplate + str(j)
+                    s3_create_object(_logger, ecs_connection, _stsAccessKeyId, _stsSecretKey, _stsSessionToken, (bucketPrefix + "-" + str(i)), (objectPrefix + "-" + str(j)), object_data, user_metadata_dictionary)
+                    j += 1
+
+                i += 1
+        except Exception as ex:
+            _logger.error(MODULE_NAME + '::ecs_test_sts_temp_credentials::Unexpected error encountered. Cause: '
+                          + str(ex))
+            break
 
 
 def ecs_ido_sso_login(username, password):
@@ -366,26 +464,26 @@ def ecs_ido_sso_login(username, password):
     print("#################################################################:")
 
     # Create our ECSSAMLAssertion class instance
-    ecsassert = ECSSAMLAssertion(assertion)
+    ecsAssertion = ECSSAMLAssertion(assertion)
 
     # Parse the returned assertion and extract the authorized roles
-    awsroles = []
+    awsRoles = []
     root = ET.fromstring(base64.b64decode(assertion))
     for saml2attribute in root.iter('{urn:oasis:names:tc:SAML:2.0:assertion}Attribute'):
-        if (saml2attribute.get('Name') == 'https://aws.amazon.com/SAML/Attributes/Role'):
-            for saml2attributevalue in saml2attribute.iter('{urn:oasis:names:tc:SAML:2.0:assertion}AttributeValue'):
-                awsroles.append(saml2attributevalue.text)
+        if saml2attribute.get('Name') == 'https://aws.amazon.com/SAML/Attributes/Role':
+            for saml2AttributeValue in saml2attribute.iter('{urn:oasis:names:tc:SAML:2.0:assertion}AttributeValue'):
+                awsRoles.append(saml2AttributeValue.text)
 
     # Note the format of the attribute value should be role_arn,principal_arn
     # but lots of blogs list it as principal_arn,role_arn so let's reverse
     # them if needed
-    for awsrole in awsroles:
-        chunks = awsrole.split(',')
+    for awsRole in awsRoles:
+        chunks = awsRole.split(',')
         if 'saml-provider' in chunks[0]:
-            newawsrole = chunks[1] + ',' + chunks[0]
-            index = awsroles.index(awsrole)
-            awsroles.insert(index, newawsrole)
-            awsroles.remove(awsrole)
+            newAwsRole = chunks[1] + ',' + chunks[0]
+            index = awsRoles.index(awsRole)
+            awsRoles.insert(index, newAwsRole)
+            awsRoles.remove(awsRole)
 
     # If I have more than one role, ask the user which one they want,
     # otherwise just proceed
@@ -393,18 +491,23 @@ def ecs_ido_sso_login(username, password):
     i = 0
     print("The following provider/role combinations are contained in the provided SAML Assertion "
           "and can be used with the with teh ECS AssumeRoleWithSAML STS api call")
-    for awsrole in awsroles:
-        ecsassert.roles.append(awsrole.split(',')[0])
-        ecsassert.providers.append(awsrole.split(',')[1])
-        print('[', i, ']: ', awsrole.split(',')[0], awsrole.split(',')[1])
+    _samlAssertionRoles = {}
+    for awsRole in awsRoles:
+        stringFullRoleArn = awsRole.split(',')[0]
+        ecsAssertion.roles.append(stringFullRoleArn)
+        stringShortRole = stringFullRoleArn.split('/')[1]
+        ecsAssertion.shortRoles.append(stringShortRole)
+        ecsAssertion.providers.append(awsRole.split(',')[1])
+        print('[', i, ']: ', awsRole.split(',')[0], awsRole.split(',')[1])
         i += 1
-    return ecsassert
+    return ecsAssertion
 
 
 """
 Main 
 """
 if __name__ == "__main__":
+
     try:
         # Create object to support controlled shutdown
         controlledShutdown = ECSDataCollectionShutdown()
@@ -441,7 +544,7 @@ if __name__ == "__main__":
             # 5. Call the ECS STS API to perform an AssumeRoleWithSAML Call to get a temporary set of credentials
 
             # Gather credentials and IDP URL
-            print("Enter AD User:")
+            print("Enter Active Directory User:")
             username = input()
             password = getpass.getpass()
             print('')
@@ -452,10 +555,43 @@ if __name__ == "__main__":
             # If we have a valid assertion make a call the ECS STS API using the
             # first role / provider combination in the assertion object
             if not (saml_assertion is None):
-                ECSDataCollection("ecs_assume_role_saml", log_it, _ecsManagmentAPI, tempFilePath, saml_assertion)
+                # First lets have the user select the role from the assertion they want to assume role with
+                while True:
+                    print("Please enter the name of one of the following roles contained in the assertion that you "
+                          "want to assume:\r\n\t\t")
+                    roleToAssume = input(saml_assertion.shortRoles)
 
-            # Exit
+                    bRoleExists = False
+                    index_of_role_to_assume = 0
+                    for r in saml_assertion.shortRoles:
+                        if r == roleToAssume:
+                            bRoleExists = True
+                        else:
+                            index_of_role_to_assume += 1
+
+                    if not bRoleExists:
+                        print("The role entered does not exist in the SAML Assertion.\r\n")
+                        continue
+                    else:
+                        if ECSDataCollection("ecs_assume_role_saml", log_it, _ecsApi, tempFilePath, saml_assertion, index_of_role_to_assume):
+                            # The SAML assertion call completed now lets generate some data if we're configured for it.
+                            generate_test_data = _configuration.test_data_generation['generate_data']
+                            if generate_test_data in ['Y', 'y']:
+                                if ecs_test_sts_temp_credentials():
+                                    print("#################### Test Data Generation Processing Completed Successfully "
+                                          "with Temporary Credentials ###############################:")
+                                    log_it.info(MODULE_NAME + '::__main__::Completed processing successfully.')
+                                else:
+                                    print("#################### Test Data Generation Failed with Temporary Credentials.  "
+                                          "Please check logs ###############################:")
+                                    log_it.info(MODULE_NAME + '::__main__::Completed processing with errors.  Please '
+                                                              'check the logs.')
+                            else:
+                                print("#################### Skipping Test Data Generation - Processing Completed Successfully "
+                                      "with Temporary Credentials ###############################:")
+                                log_it.info(MODULE_NAME + '::__main__::Completed processing successfully.')
+                        break
 
     except Exception as e:
-        print(MODULE_NAME + '__main__::The following unexpected error occured: '
+        print(MODULE_NAME + '__main__::The following unexpected error occurred: '
               + str(e) + "\n" + traceback.format_exc())

@@ -4,13 +4,14 @@ DELL EMC ECS SAML Assertion Demo.
 import logging
 import os
 import json
-import numbers
 
 # Constants
 BASE_CONFIG = 'BASE'                                          # Base Configuration Section
 ECS_CONNECTION_CONFIG = 'ECS_CONNECTION'                      # ECS Connection Configuration Section
 AWS_CONNECTION_CONFIG = 'AWS_CONFIGURATION'                   # AWS Configuration Section
 SAML_IDP_CONFIGURATION = 'SAML_IDP'                           # SAML Configuration Section
+TEST_DATA_GENERATION = 'TEST_DATA_GENERATION'                 # Test Data Configuration Section
+USER_META_DATA = 'USER_META_DATA'                             # User Meta Data Configuration Section
 
 
 class InvalidConfigurationException(Exception):
@@ -73,8 +74,12 @@ class ECSSAMLConfiguration(object):
             if not ecsconnection['user']:
                 raise InvalidConfigurationException("The ECS Management User is not configured in the module configuration")
             if not ecsconnection['password']:
-                raise InvalidConfigurationException("The ECS Management Users password is not configured "
-                                                    "in the module configuration")
+                raise InvalidConfigurationException("The ECS Management Users password is not configured in the module configuration")
+            if not ecsconnection['secureDataPort']:
+                raise InvalidConfigurationException("The HTTPS Data Port is not configured in the module configuration")
+            if not ecsconnection['insecureDataPort']:
+                raise InvalidConfigurationException("The HTTP Data Port is not configured in the module configuration")
+
             # Validate API query parameters
             if not ecsconnection['dataType']:
                 ecsconnection['dataType'] = "default"
@@ -87,3 +92,33 @@ class ECSSAMLConfiguration(object):
 
             if not ecsconnection['readTimeout']:
                 ecsconnection['readTimeout'] = "60"
+
+        self.test_data_generation = parser[TEST_DATA_GENERATION]
+        generate_test_data = parser[TEST_DATA_GENERATION]['generate_data']
+
+        if generate_test_data not in ['Y', 'N', 'y', 'n']:
+            raise InvalidConfigurationException(
+                "Generate Test Data flag can be only one of ['Y', 'N', 'y', 'n']")
+
+        if generate_test_data in ['Y', 'y']:
+            bucketPrefix = parser[TEST_DATA_GENERATION]['bucketPrefix']
+            objectPrefix = parser[TEST_DATA_GENERATION]['objectPrefix']
+            objectContentTemplate = parser[TEST_DATA_GENERATION]['objectContentTemplate']
+            numberOfBuckets = parser[TEST_DATA_GENERATION]['numberOfBuckets']
+            numberOfObjects = parser[TEST_DATA_GENERATION]['numberOfObjects']
+            userMetadataHeaderPrefix = parser[TEST_DATA_GENERATION]['userMetadataHeaderPrefix']
+
+            if not bucketPrefix:
+                raise InvalidConfigurationException("The Bucket Prefix is not configured in the module configuration")
+            if not objectPrefix:
+                raise InvalidConfigurationException("The Object Prefix port is not configured in the module configuration")
+            if not objectContentTemplate:
+                raise InvalidConfigurationException("The Object Content Template is not configured in the module configuration")
+            if not numberOfBuckets:
+                raise InvalidConfigurationException("The # of Buckets to Create is not configured in the module configuration")
+            if not numberOfObjects:
+                raise InvalidConfigurationException("The # of Object to Create is not configured in the module configuration")
+            if not userMetadataHeaderPrefix:
+                raise InvalidConfigurationException("The User Meta Data Header Prefix is not configured in the module configuration")
+
+        self.user_metadata = parser[USER_META_DATA]
