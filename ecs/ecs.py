@@ -639,6 +639,28 @@ class ECSApi(object):
         except Exception as ex:
             raise ex
 
+    def s3_delete_bucket(self, access_key, secret_key, session_token, data_port, bucket_name):
+
+        try:
+            session = boto3.session.Session()
+
+            s3_client = session.client(
+                service_name='s3',
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                aws_session_token=session_token,
+                endpoint_url="http://{0}:{1}".format(self.authentication.host, data_port),
+            )
+
+            # Delete the bucket
+            response = s3_client.delete_bucket(
+                Bucket=bucket_name
+            )
+
+            print(response)
+        except Exception as ex:
+            raise ex
+
     def s3_create_object(self, access_key, secret_key, session_token, data_port, bucket_name,
                          object_name, object_content, user_meta_data):
 
@@ -658,6 +680,28 @@ class ECSApi(object):
                 Bucket=bucket_name,
                 Key=object_name,
                 Metadata=user_meta_data
+            )
+            print(response)
+        except Exception as ex:
+            raise ex
+
+    def s3_delete_object(self, access_key, secret_key, session_token, data_port, bucket_name, object_name):
+
+        try:
+            session = boto3.session.Session()
+
+            s3_client = session.client(
+                service_name='s3',
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                aws_session_token=session_token,
+                endpoint_url="http://{0}:{1}".format(self.authentication.host, data_port),
+            )
+
+            # Delete the object
+            response = s3_client.delete_object(
+                Bucket=bucket_name,
+                Key=object_name
             )
             print(response)
         except Exception as ex:

@@ -221,6 +221,17 @@ def s3_create_bucket(logger, ecs_connection_input, access_key, secret_key, sessi
         raise ex
 
 
+def s3_delete_bucket(logger, ecs_connection_input, access_key, secret_key, session_token, bucket_name):
+    global _configuration
+    global _logger
+    global _ecsAuthentication
+
+    try:
+        ecs_connection_input.s3_delete_bucket(access_key, secret_key, session_token, 9020, bucket_name)
+    except Exception as ex:
+        raise ex
+
+
 def s3_create_object(logger, ecs_connection_input, access_key, secret_key, session_token, bucket_name, object_name, object_content, user_meta_data):
     global _configuration
     global _logger
@@ -228,6 +239,17 @@ def s3_create_object(logger, ecs_connection_input, access_key, secret_key, sessi
 
     try:
         ecs_connection_input.s3_create_object(access_key, secret_key, session_token, 9020, bucket_name, object_name, object_content, user_meta_data)
+    except Exception as ex:
+        raise ex
+
+
+def s3_delete_object(logger, ecs_connection_input, access_key, secret_key, session_token, bucket_name, object_name):
+    global _configuration
+    global _logger
+    global _ecsAuthentication
+
+    try:
+        ecs_connection_input.s3_delete_object(access_key, secret_key, session_token, 9020, bucket_name, object_name)
     except Exception as ex:
         raise ex
 
@@ -349,19 +371,17 @@ def ecs_test_sts_temp_credentials():
                 i += 1
 
             # Now delete the objects and buckets created
-            while j <= int(buckets_to_create):
-                # Create the bucket
+            k = 1
+            while k <= int(buckets_to_create):
+                # Delete the objects in the bucket
+                m = 1
+                while m <= int(objects_to_create):
 
-                s3_create_bucket(_logger, ecs_connection, _stsAccessKeyId, _stsSecretKey, _stsSessionToken, (bucketPrefix + "-" + str(i)))
+                    s3_delete_object(_logger, ecs_connection, _stsAccessKeyId, _stsSecretKey, _stsSessionToken, (bucketPrefix + "-" + str(k)), (objectPrefix + "-" + str(m)))
+                    m += 1
 
-                # Create the objects in the bucket
-                k = 1
-                while j <= int(objects_to_create):
-                    object_data = objectContentTemplate + str(j)
-                    s3_create_object(_logger, ecs_connection, _stsAccessKeyId, _stsSecretKey, _stsSessionToken, (bucketPrefix + "-" + str(i)), (objectPrefix + "-" + str(j)), object_data, user_metadata_dictionary)
-                    j += 1
-
-                i += 1
+                s3_delete_bucket(_logger, ecs_connection, _stsAccessKeyId, _stsSecretKey, _stsSessionToken, (bucketPrefix + "-" + str(k)))
+                k += 1
         except Exception as ex:
             _logger.error(MODULE_NAME + '::ecs_test_sts_temp_credentials::Unexpected error encountered. Cause: '
                           + str(ex))
@@ -566,6 +586,7 @@ if __name__ == "__main__":
                     for r in saml_assertion.shortRoles:
                         if r == roleToAssume:
                             bRoleExists = True
+                            break
                         else:
                             index_of_role_to_assume += 1
 
