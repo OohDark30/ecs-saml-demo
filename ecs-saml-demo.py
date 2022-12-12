@@ -3,15 +3,13 @@
 """
 import base64
 import urllib
-
+import urllib.parse
 import requests
 from bs4 import BeautifulSoup
-
 from configuration.ecs_saml_demo_configuration import ECSSAMLConfiguration
 from logger import ecs_logger
 from ecs.ecs import ECSAuthentication
 from ecs.ecs import ECSApi
-from ecs.ecs import ECSUtility
 import errno
 import getpass
 import os
@@ -388,7 +386,18 @@ def ecs_test_sts_temp_credentials():
             break
 
 
-def ecs_ido_sso_login(username, password):
+def prepare_saml_request():
+    return {
+        "https": "off",
+        'http_host': '10.154.48.63:8000',
+        'script_name': '/',
+        'server_port': '',
+        'get_data': '',
+        'post_data': ''
+    }
+
+
+def ecs_ido_sso_login(username, password, configFilePath):
     global _logger
     global _configuration
 
@@ -400,6 +409,13 @@ def ecs_ido_sso_login(username, password):
     # gets the resulting login page
     sslverification = False
     formresponse = session.get(_configuration.saml_idp_url, verify=sslverification)
+
+    # Debug the response code if needed
+    #print(formresponse.status_code)
+
+    # Return logic - Seen the need for this in some Ping Federate environments
+    while formresponse.status_code == 401:
+        formresponse = session.get(formresponse.url)
 
     # Capture the idpauthformsubmiturl, which is the final url after all the 302s
     idpauthformsubmiturl = formresponse.url
@@ -437,16 +453,20 @@ def ecs_ido_sso_login(username, password):
     for inputtag in formsoup.find_all(re.compile('(FORM|form)')):
         action = inputtag.get('action')
         loginid = inputtag.get('id')
+        # Check for PingFederate login form
         if action and loginid == "loginForm":
             parsedurl = urllib.parse.urlparse(_configuration.saml_idp_url)
             idpauthformsubmiturl = parsedurl.scheme + "://" + parsedurl.netloc + action
+        # Check for Keycloak login form
+        if loginid == "kc-form-login":
+            idpauthformsubmiturl = action
 
     # Performs the submission of the IdP login form with the above post data
     response = session.post(
         idpauthformsubmiturl, data=payload, verify=sslverification)
 
     # Debug the response if needed
-    # print (response.text)
+    #print(response.text)
 
     # Overwrite and delete the credential variables, just for safety
     username = '##############################################'
@@ -522,7 +542,6 @@ def ecs_ido_sso_login(username, password):
         i += 1
     return ecsAssertion
 
-
 """
 Main 
 """
@@ -535,9 +554,10 @@ if __name__ == "__main__":
         # Dump out application path
         currentApplicationDirectory = os.getcwd()
         configFilePath = os.path.abspath(os.path.join(currentApplicationDirectory, "configuration", CONFIG_FILE))
+        configDirectory = os.path.abspath(os.path.join(currentApplicationDirectory, "configuration"))
         tempFilePath = os.path.abspath(os.path.join(currentApplicationDirectory, "temp"))
 
-        # Create temp directory if it doesn't already exists
+        # Create temp directory if needed
         if not os.path.isdir(tempFilePath):
             os.mkdir(tempFilePath)
         else:
@@ -570,7 +590,7 @@ if __name__ == "__main__":
             print('')
 
             # Perform the SSO login to the IDP and process the assertion
-            saml_assertion = ecs_ido_sso_login(username, password)
+            saml_assertion = ecs_ido_sso_login(username, password, configDirectory)
 
             # If we have a valid assertion make a call the ECS STS API using the
             # first role / provider combination in the assertion object
