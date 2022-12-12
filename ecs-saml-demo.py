@@ -584,10 +584,8 @@ if __name__ == "__main__":
             # 5. Call the ECS STS API to perform an AssumeRoleWithSAML Call to get a temporary set of credentials
 
             # Gather credentials and IDP URL
-            print("Enter Active Directory User:")
-            username = input()
-            password = getpass.getpass()
-            print('')
+            username = input("Enter the IdP User Name.  Typically an Active Directory User:")
+            password = getpass.getpass(prompt='Enter your password: ')
 
             # Perform the SSO login to the IDP and process the assertion
             saml_assertion = ecs_ido_sso_login(username, password, configDirectory)
